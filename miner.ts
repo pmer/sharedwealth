@@ -1,16 +1,22 @@
 "use strict";
 
-let Block = require('./block.js');
-let Client = require('./client.js');
+import Block from './block.js';
+import Client from './client.js';
+import Transaction from './transaction.js';
+
+import { Net } from './types.js';
 
 const NUM_ROUNDS_MINING = 2000;
 
 /**
  * Miners are clients, but they also mine blocks looking for "proofs".
  */
-module.exports = class Miner extends Client {
+export default class Miner extends Client {
+  miningRounds: number;
+  currentBlock: Block;
+
   // Network message types
-  static get START_MINING() { return "START_MINING"; }
+  static get START_MINING() { return 'START_MINING'; }
 
   /**
    * When a new miner is created, but the PoW search is **not** yet started.
@@ -19,22 +25,35 @@ module.exports = class Miner extends Client {
    * @constructor
    * @param {Object} obj - The properties of the client.
    * @param {String} [obj.name] - The miner's name, used for debugging messages.
-   * * @param {Object} net - The network that the miner will use
+   * @param {Object} net - The network that the miner will use
    *      to send messages to all other clients.
    * @param {Block} [startingBlock] - The most recently ALREADY ACCEPTED block.
    * @param {Number} [miningRounds] - The number of rounds a miner mines before checking
    *      for messages.  (In single-threaded mode with FakeNet, this parameter can
    *      simulate miners with more or less mining power.)
    */
-  constructor({name, net, startingBlock, miningRounds=NUM_ROUNDS_MINING} = {}) {
+  constructor({
+    name,
+    net,
+    startingBlock,
+    miningRounds = NUM_ROUNDS_MINING
+  }: {
+    name?: string;
+    net: Net;
+    startingBlock?: Block;
+    miningRounds?: number;
+  }) {
     super({name, net, startingBlock});
-    this.miningRounds=miningRounds;
+    this.miningRounds = miningRounds;
+
+    this.currentBlock = new Block(this.address, this.lastBlock);
+    this.currentBlock.proof = 0;
   }
 
   /**
    * Starts listeners and begins mining.
    */
-  initialize() {
+  initialize(): void {
     this.startNewSearch();
 
     this.on(Miner.START_MINING, this.findProof);
@@ -46,7 +65,7 @@ module.exports = class Miner extends Client {
   /**
    * Sets up the miner to start searching for a new block.
    */
-  startNewSearch() {
+  startNewSearch(): void {
     this.currentBlock = new Block(this.address, this.lastBlock);
 
     // Start looking for a proof at 0.
@@ -55,16 +74,16 @@ module.exports = class Miner extends Client {
 
   /**
    * Looks for a "proof".  It breaks after some time to listen for messages.  (We need
-   * to do this since JS does not support concurrency).
+   * to do this since JS does not support parallelism.)
    * 
    * The 'oneAndDone' field is used for testing only; it prevents the findProof method
    * from looking for the proof again after the first attempt.
    * 
    * @param {boolean} oneAndDone - Give up after the first PoW search (testing only).
    */
-  findProof(oneAndDone=false) {
-    let pausePoint = this.currentBlock.proof + this.miningRounds;
-    while (this.currentBlock.proof < pausePoint) {
+  findProof(oneAndDone: boolean = false): void {
+    const pausePoint = this.currentBlock.proof! + this.miningRounds;
+    while (this.currentBlock.proof! < pausePoint) {
       if (this.currentBlock.hasValidProof()) {
         this.log(`found proof for block ${this.currentBlock.chainLength}: ${this.currentBlock.proof}`);
         this.announceProof();
@@ -72,7 +91,7 @@ module.exports = class Miner extends Client {
         this.startNewSearch();
         break;
       }
-      this.currentBlock.proof++;
+      this.currentBlock.proof!++;
     }
     // If we are testing, don't continue the search.
     if (!oneAndDone) {
@@ -84,8 +103,8 @@ module.exports = class Miner extends Client {
   /**
    * Broadcast the block, with a valid proof included.
    */
-  announceProof() {
-    this.net.broadcast(this.PROOF_FOUND, this.currentBlock.serialize());
+  announceProof(): void {
+    this.net.broadcast(Client.PROOF_FOUND, this.currentBlock.serialize());
   }
 
   /**
@@ -95,17 +114,19 @@ module.exports = class Miner extends Client {
    * 
    * @param {Block | String} s - The block, usually in serialized form.
    */
-  receiveBlock(s) {
-    let b = super.receiveBlock(s);
+  receiveBlock(s: Block | string): null {
+    const b = super.receiveBlock(s);
 
     if (b === null) return null;
 
     // We switch over to the new chain only if it is better.
     if (this.currentBlock && b.chainLength > this.currentBlock.chainLength) {
       this.log(`cutting over to new chain.`);
-      this.syncTransactions();
+      //this.syncTransactions();
       this.startNewSearch();
     }
+
+    return null;
   }
 
   /**
@@ -129,8 +150,7 @@ module.exports = class Miner extends Client {
    * 
    * @param {Transaction} tx - The transaction to add.
    */
-  addTransaction(tx) {
+  addTransaction(tx: Transaction): boolean {
     return this.currentBlock.addTransaction(tx);
   }
-
 }

@@ -2,11 +2,13 @@
   "name": "spartan-gold",
   "version": "1.0.0",
   "description": "A simplified blockchain-based cryptocurrency for experimentation",
-  "main": "index.js",
+  "main": "driver.js",
   "scripts": {
+    "build": "tsc",
     "lint": "eslint **/*.js",
     "preinstall": "npx npm-force-resolutions",
-    "test": "mocha"
+    "test": "mocha",
+    "watch": "tsc -w"
   },
   "repository": {
     "type": "git",
@@ -23,16 +25,16 @@
   },
   "homepage": "https://github.com/taustin/spartan-gold#readme",
   "dependencies": {
-    "chai": "^4.2.0",
-    "jsbn": "^1.1.0",
-    "mocha": "^5.2.0"
+    "jsbn": "^1.1.0"
   },
   "devDependencies": {
+    "@types/chai": "^4.2.11",
+    "@types/jsbn": "^1.2.29",
+    "@types/mocha": "^7.0.2",
+    "@types/node": "^13.13.4",
+    "chai": "^4.2.0",
     "eslint": "^6.8.0",
-    "minimist": "^1.2.5",
-    "mkdirp": "^1.0.4"
-  },
-  "resolutions": {
-    "mkdirp": "^1.0.4"
+    "mocha": "^5.2.0",
+    "typescript": "^3.8.3"
   }
 }

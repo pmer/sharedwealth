@@ -1,9 +1,11 @@
 "use strict";
 
-const utils = require('./utils.js');
+import * as utils from './utils.js';
+
+import { Balances, Key, Outputs, Signature } from './types.js';
 
 // String constants mixed in before hashing.
-const TX_CONST = "TX";
+const TX_CONST = 'TX';
 
 /**
  * A transaction comes from a single account, specified by "address". For
@@ -12,7 +14,13 @@ const TX_CONST = "TX";
  * (Nonces are in increasing order, so it is easy to determine when a nonce
  * has been used.)
  */
-module.exports = class Transaction {
+export default class Transaction {
+  from: string;
+  nonce: number;
+  pubKey: Key;
+  sig?: Signature;
+  fee: number;
+  outputs: Outputs;
 
   /**
    * The constructor for a transaction includes an array of outputs, meaning
@@ -31,7 +39,21 @@ module.exports = class Transaction {
    * @param obj.fee - The amount of gold offered as a transaction fee.
    * @param {Array} obj.outputs - An array of the outputs.
    */
-  constructor({from, nonce, pubKey, sig, outputs, fee=0}) {
+  constructor({
+    from,
+    nonce,
+    pubKey,
+    sig,
+    outputs,
+    fee = 0
+  }: {
+    from: string;
+    nonce: number;
+    pubKey: Key;
+    sig?: Signature;
+    outputs: Outputs;
+    fee: number;
+  }) {
     this.from = from;
     this.nonce = nonce;
     this.pubKey = pubKey;
@@ -43,13 +65,14 @@ module.exports = class Transaction {
   /**
    * A transaction's ID is derived from its contents.
    */
-  get id() {
+  get id(): string {
     return utils.hash(TX_CONST + JSON.stringify({
       from: this.from,
       nonce: this.nonce,
       pubKey: this.pubKey,
       outputs: this.outputs,
-      fee: this.fee}));
+      fee: this.fee
+    }));
   }
 
   /**
@@ -58,7 +81,7 @@ module.exports = class Transaction {
    * @param privKey  - The key used to sign the signature.  It should match the
    *    public key included in the transaction.
    */
-  sign(privKey) {
+  sign(privKey: Key): void {
     this.sig = utils.sign(privKey, this.id);
   }
 
@@ -69,14 +92,18 @@ module.exports = class Transaction {
    * 
    * @returns {Boolean} - Validity of the signature and from address.
    */
-  validSignature() {
+  validSignature(): boolean {
     return this.sig !== undefined &&
         utils.addressMatchesKey(this.from, this.pubKey) &&
         utils.verifySignature(this.pubKey, this.id, this.sig);
   }
 
-  sufficientFunds(balances) {
-    return this.totalOutput() <= balances.get(this.from);
+  sufficientFunds(balances: Balances): boolean {
+    const balance = balances.get(this.from);
+    if (balance === undefined) {
+      return false;
+    }
+    return this.totalOutput() <= balance;
   }
 
   /**
@@ -84,7 +111,7 @@ module.exports = class Transaction {
    * 
    * @returns {Number} - Total amount of gold given out with this transaction.
    */
-  totalOutput() {
+  totalOutput(): number {
     return this.outputs.reduce( (totalValue, {amount}) => totalValue + amount, this.fee);
   }
 }

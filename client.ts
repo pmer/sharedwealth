@@ -1,11 +1,12 @@
 "use strict";
 
-let EventEmitter = require('events');
+import events from 'events';
 
-let Block = require('./block.js');
-let Transaction = require('./transaction.js');
+import Block from './block.js';
+import Transaction from './transaction.js';
 
-let utils = require('./utils.js');
+import { Keypair, Outputs, Net } from './types.js';
+import { calcAddress, generateKeypair } from './utils.js';
 
 const DEFAULT_TX_FEE = 1;
 
@@ -18,11 +19,42 @@ const CONFIRMED_DEPTH = 6;
  * A client has a public/private keypair and an address.
  * It can send and receive messages on the Blockchain network.
  */
-module.exports = class Client extends EventEmitter {
+export default class Client extends events.EventEmitter {
+  net: Net;
+  name?: string;
+
+  keyPair: Keypair;
+  address: string;
+
+  // Establishes order of transactions.  Incremented with each
+  // new output transaction from this client.  This feature
+  // avoids replay attacks.
+  nonce: number;
+
+  // FIXME: Need to restore pending amounts and transactions.
+  pendingSpent: number;
+
+  // A map of all block hashes to the accepted blocks.
+  blocks: Map<string,Block>;
+
+  // A map of missing block IDS to the list of blocks depending
+  // on the missing blocks.
+  pendingBlocks: Map<string,Set<Block>>;
+
+  // Transactions from this block or older are assumed to be confirmed,
+  // and therefore are spendable by the client. The transactions could
+  // roll back, but it is unlikely.
+  lastConfirmedBlock?: Block;
+
+  // The last block seen.  Any transactions after lastConfirmedBlock
+  // up to lastBlock are considered pending.
+  lastBlock?: Block;
+
+
   // Network message types
-  static get MISSING_BLOCK() { return "MISSING_BLOCK"; }
-  static get POST_TRANSACTION() { return "POST_TRANSACTION"; }
-  static get PROOF_FOUND() { return "PROOF_FOUND"; }
+  static get MISSING_BLOCK() { return 'MISSING_BLOCK'; }
+  static get POST_TRANSACTION() { return 'POST_TRANSACTION'; }
+  static get PROOF_FOUND() { return 'PROOF_FOUND'; }
 
   /**
    * The net object determines how the client communicates
@@ -36,14 +68,22 @@ module.exports = class Client extends EventEmitter {
    *    to send messages to all miners and clients.
    * @param {Block} [obj.startingBlock] - The starting point of the blockchain for the client.
    */
-  constructor({name, net, startingBlock} = {}) {
+  constructor({
+    name,
+    net,
+    startingBlock
+  }: {
+    name?: string;
+    net: Net;
+    startingBlock?: Block;
+  }) {
     super();
 
     this.net = net;
     this.name = name;
 
-    this.keyPair = utils.generateKeypair();
-    this.address = utils.calcAddress(this.keyPair.public);
+    this.keyPair = generateKeypair();
+    this.address = calcAddress(this.keyPair.public);
 
     // Establishes order of transactions.  Incremented with each
     // new output transaction from this client.  This feature
@@ -52,9 +92,6 @@ module.exports = class Client extends EventEmitter {
 
     // FIXME: Need to restore pending amounts and transactions.
     this.pendingSpent = 0;
-
-    // A map of transactions received but not yet confirmed.
-    this.pendingReceivedTransactions = new Map();
 
     // A map of all block hashes to the accepted blocks.
     this.blocks = new Map();
@@ -78,9 +115,9 @@ module.exports = class Client extends EventEmitter {
    * 
    * @param {Block} startingBlock - The genesis block of the blockchain.
    */
-  setGenesisBlock(startingBlock) {
+  setGenesisBlock(startingBlock: Block): void {
     if (this.lastBlock) {
-      throw new Error("Cannot set genesis block for existing blockchain.");
+      throw new Error('Cannot set genesis block for existing blockchain.');
     }
 
     // Transactions from this block or older are assumed to be confirmed,
@@ -100,8 +137,8 @@ module.exports = class Client extends EventEmitter {
    * transactions.  This getter looks at the last confirmed block, since
    * transactions in newer blocks may roll back.
    */
-  get confirmedBalance() {
-    return this.lastConfirmedBlock.balanceOf(this.address);
+  get confirmedBalance(): number {
+    return this.lastConfirmedBlock!.balanceOf(this.address);
   }
 
   /**
@@ -110,7 +147,7 @@ module.exports = class Client extends EventEmitter {
    * However, any gold given by the client to other clients in unconfirmed
    * transactions is treated as unavailable.
    */
-  get availableGold() {
+  get availableGold(): number {
     return this.confirmedBalance - this.pendingSpent;
   }
 
@@ -123,17 +160,17 @@ module.exports = class Client extends EventEmitter {
    *    amounts to pay.
    * @param {number} [fee] - The transaction fee reward to pay the miner.
    */
-  postTransaction(outputs, fee=DEFAULT_TX_FEE) {
+  postTransaction(outputs: Outputs, fee: number = DEFAULT_TX_FEE): void {
     // We calculate the total value of gold needed.
-    let totalPayments = outputs.reduce((acc, {amount}) => acc + amount, 0) + fee;
+    const totalPayments = outputs.reduce((acc, {amount}) => acc + amount, 0) + fee;
 
     // Make sure the client has enough gold.
     if (totalPayments > this.availableGold) {
-      throw new Error(`Requested ${totalPayments}, but account only has ${this.balance}.`);
+      throw new Error(`Requested ${totalPayments}, but account only has ${this.availableGold}.`);
     }
 
     // Broadcasting the new transaction.
-    let tx = new Transaction({
+    const tx = new Transaction({
       from: this.address,
       nonce: this.nonce,
       pubKey: this.keyPair.public,
@@ -163,7 +200,7 @@ module.exports = class Client extends EventEmitter {
    * 
    * @returns {Block | null} The block with rerun transactions, or null for an invalid block.
    */
-  receiveBlock(block) {
+  receiveBlock(block: Block | string): Block | null {
     // If the block is a string, then deserialize it.
     if (typeof block === 'string') {
       block = Block.deserialize(block);
@@ -181,7 +218,7 @@ module.exports = class Client extends EventEmitter {
 
     // Make sure that we have the previous blocks.
     // If we don't, request the missing blocks and exit.
-    let prevBlock = this.blocks.get(block.prevBlockHash);
+    const prevBlock = this.blocks.get(block.prevBlockHash);
     if (!prevBlock) {
       let stuckBlocks = this.pendingBlocks.get(block.prevBlockHash);
 
@@ -199,7 +236,7 @@ module.exports = class Client extends EventEmitter {
 
     // Verify the block, and store it if everything looks good.
     // This code will trigger an exception if there are any invalid transactions.
-    let success = block.rerun(prevBlock);
+    const success = block.rerun(prevBlock);
     if (!success) return null;
 
     // Storing the block.
@@ -207,20 +244,20 @@ module.exports = class Client extends EventEmitter {
 
     // If it is a better block than the client currently has, set that
     // as the new currentBlock, and update the lastConfirmedBlock.
-    if (this.lastBlock.chainLength < block.chainLength) {
+    if (this.lastBlock!.chainLength < block.chainLength) {
       this.lastBlock = block;
       this.setLastConfirmed();
     }
 
     // Go through any blocks that were waiting for this block
     // and recursively call receiveBlock.
-    let unstuckBlocks = this.pendingBlocks.get(block.id) || [];
+    const unstuckBlocks = this.pendingBlocks.get(block.id) || [];
     // Remove these blocks from the pending set.
     this.pendingBlocks.delete(block.id);
-    unstuckBlocks.forEach((b) => {
+    for (const b of unstuckBlocks) {
       this.log(`Processing unstuck block ${b.id}`);
       this.receiveBlock(b);
-    });
+    }
 
     return block;
   }
@@ -230,9 +267,9 @@ module.exports = class Client extends EventEmitter {
    * 
    * @param {Block} block - The block that is connected to a missing block.
    */
-  requestMissingBlock(block) {
+  requestMissingBlock(block: Block): void {
     this.log(`Asking for missing block: ${block.prevBlockHash}`);
-    let msg = {
+    const msg = {
       from: this.address,
       missing: block.prevBlockHash,
     }
@@ -246,11 +283,11 @@ module.exports = class Client extends EventEmitter {
    * 
    * @param {string} msg - JSON-formatted string.
    */
-  provideMissingBlock(msg) {
-    let o = JSON.parse(msg);
+  provideMissingBlock(msg: string): void {
+    const o = JSON.parse(msg);
     if (this.blocks.has(o.missing)) {
       this.log(`Providing missing block ${o.missing}`);
-      let block = this.blocks.get(o.missing);
+      const block = this.blocks.get(o.missing)!;
       this.net.sendMessage(o.from, Client.PROOF_FOUND, block.serialize());
     }
   }
@@ -259,14 +296,14 @@ module.exports = class Client extends EventEmitter {
    * Sets the last confirmed block according to the most recently accepted block.
    * Note that the genesis block is always considered to be confirmed.
    */
-  setLastConfirmed() {
-    let block = this.lastBlock;
+  setLastConfirmed(): void {
+    let block = this.lastBlock!;
     let confirmedBlockHeight = block.chainLength - CONFIRMED_DEPTH;
     if (confirmedBlockHeight < 0) {
       confirmedBlockHeight = 0;
     }
     while (block.chainLength > confirmedBlockHeight) {
-      block = this.blocks.get(block.prevBlockHash);
+      block = this.blocks.get(block.prevBlockHash)!;
     }
     this.lastConfirmedBlock = block;
   }
@@ -275,8 +312,8 @@ module.exports = class Client extends EventEmitter {
    * Utility method that displays all confimed balances for all clients,
    * according to the client's own perspective of the network.
    */
-  showAllBalances() {
-    for (let [id,balance] of this.lastConfirmedBlock.balances) {
+  showAllBalances(): void {
+    for (const [id,balance] of this.lastConfirmedBlock!.balances) {
       this.log(`${id}: ${balance}`);
     }
   }
@@ -288,9 +325,8 @@ module.exports = class Client extends EventEmitter {
    * 
    * @param {String} msg - The message to display to the console.
    */
-  log(msg) {
-    let name = this.name || this.address.substring(0,10);
+  log(msg: string): void {
+    const name = this.name || this.address.substring(0,10);
     console.log(`${name}: ${msg}`);
   }
 }
-

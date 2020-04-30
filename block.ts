@@ -1,20 +1,39 @@
 "use strict";
 
-const BigInteger = require('jsbn').BigInteger;
+import { BigInteger } from 'jsbn';
 
-const Transaction = require('./transaction.js');
+import Client from './client.js';
+import Transaction from './transaction.js';
 
-const utils = require('./utils.js');
+import { Balances, Nonces } from './types.js';
+import { hash } from './utils.js';
 
-const POW_BASE_TARGET = new BigInteger("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 16);
-const POW_TARGET = POW_BASE_TARGET.shiftRight(15);
+const POW_BASE_TARGET = new BigInteger('ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 16);
+
 const COINBASE_AMT_ALLOWED = 25;
+
+const GENESIS_REWARD_ADDR = '';
+const GENESIS_PREV_BLOCK_HASH = '';
 
 /**
  * A block is a collection of transactions, with a hash connecting it
  * to a previous block.
  */
-module.exports = class Block {
+export default class Block {
+  chainLength: number;
+  prevBlockHash: string;
+  proof?: number;
+  timestamp: number;
+  target: BigInteger;
+  coinbaseReward: number;
+  rewardAddr: string;
+  transactions: Map<string,Transaction>;
+
+  balances: Balances;
+  nextNonce: Nonces;
+
+  static get HIT_POW_TARGET() { return POW_BASE_TARGET.shiftRight(15); }
+  static get NEAR_MISS_POW_TARGET() { return POW_BASE_TARGET.shiftRight(18); }
 
   /**
    * Converts a string representation of a block to a new Block instance.
@@ -23,22 +42,21 @@ module.exports = class Block {
    * 
    * @returns {Block}
    */
-  static deserialize(str) {
-    let b = new Block();
-    let o = JSON.parse(str);
-    b.chainLength = parseInt(o.chainLength);
-    b.prevBlockHash = o.prevBlockHash;
+  static deserialize(str: string): Block {
+    const o = JSON.parse(str);
+
+    const b = new Block(o.rewardAddr);
     b.proof = o.proof;
     b.timestamp = o.timestamp;
-    b.rewardAddr = o.rewardAddr;
-
+    b.chainLength = parseInt(o.chainLength);
+    b.prevBlockHash = o.prevBlockHash;
 
     // Transactions need to be recreated and restored in a map.
     b.transactions = new Map();
-    o.transactions.forEach(([txID,txJson]) => {
-      let tx = new Transaction(txJson);
+    for (const [txID, txJson] of o.transactions) {
+      const tx = new Transaction(txJson);
       b.transactions.set(txID, tx);
-    });
+    }
     return b;
   }
 
@@ -52,14 +70,14 @@ module.exports = class Block {
    * 
    * @returns {Block} - The genesis block.
    */
-  static makeGenesis(clientBalanceMap) {
-    let g = new Block();
+  static makeGenesis(clientBalanceMap: Map<Client, number>): Block {
+    const g = new Block(GENESIS_REWARD_ADDR);
 
-    for (let [client, balance] of clientBalanceMap.entries()) {
+    for (const [client, balance] of clientBalanceMap.entries()) {
       g.balances.set(client.address, balance);
     }
 
-    for (let client of clientBalanceMap.keys()) {
+    for (const client of clientBalanceMap.keys()) {
       client.setGenesisBlock(g);
     }
 
@@ -77,8 +95,13 @@ module.exports = class Block {
    *      produces a smaller value when hashed.
    * @param {Number} [coinbaseReward] - The gold that a miner earns for finding a block proof.
    */
-  constructor(rewardAddr, prevBlock, target=POW_TARGET, coinbaseReward=COINBASE_AMT_ALLOWED) {
-    this.prevBlockHash = prevBlock ? prevBlock.hashVal() : null;
+  constructor(
+    rewardAddr: string,
+    prevBlock?: Block,
+    target: BigInteger = Block.HIT_POW_TARGET,
+    coinbaseReward: number = COINBASE_AMT_ALLOWED
+  ) {
+    this.prevBlockHash = prevBlock ? prevBlock.hashVal() : GENESIS_PREV_BLOCK_HASH;
     this.target = target;
 
     // Get the balances and nonces from the previous block, if available.
@@ -88,7 +111,7 @@ module.exports = class Block {
 
     if (prevBlock && prevBlock.rewardAddr) {
       // Add the previous block's rewards to the miner who found the proof.
-      let winnerBalance = this.balanceOf(prevBlock.rewardAddr) || 0;
+      const winnerBalance = this.balanceOf(prevBlock.rewardAddr) || 0;
       this.balances.set(prevBlock.rewardAddr, winnerBalance + prevBlock.totalRewards());
     }
 
@@ -115,8 +138,8 @@ module.exports = class Block {
    * 
    * @returns {Boolean} - True if this is the first block in the chain.
    */
-  isGenesisBlock() {
-    return !this.prevBlockHash;
+  isGenesisBlock(): boolean {
+    return this.prevBlockHash === GENESIS_PREV_BLOCK_HASH;
   }
 
   /**
@@ -125,9 +148,9 @@ module.exports = class Block {
    * 
    * @returns {Boolean} - True if the block has a valid proof.
    */
-  hasValidProof() {
-    let h = utils.hash(this.serialize());
-    let n = new BigInteger(h, 16);
+  hasValidProof(): boolean {
+    const h = hash(this.serialize());
+    const n = new BigInteger(h, 16);
     return n.compareTo(this.target) < 0;
   }
 
@@ -137,13 +160,15 @@ module.exports = class Block {
    * 
    * @returns {String} - The block in JSON format.
    */
-  serialize() {
-    return `{ "transactions": ${JSON.stringify(Array.from(this.transactions.entries()))},` +
-      ` "prevBlockHash": "${this.prevBlockHash}",` +
-      ` "timestamp": "${this.timestamp}",` +
-      ` "proof": "${this.proof}",` +
-      ` "rewardAddr": "${this.rewardAddr}",` +
-      ` "chainLength": "${this.chainLength}" }`;
+  serialize(): string {
+    return JSON.stringify({
+        transactions: Array.from(this.transactions.entries()),
+        prevBlockHash: this.prevBlockHash,
+        timestamp: this.timestamp,
+        proof: this.proof,
+        rewardAddr: this.rewardAddr,
+        chainLength: this.chainLength
+    });
   }
 
   /**
@@ -153,8 +178,8 @@ module.exports = class Block {
    * 
    * @returns {String} - cryptographic hash of the block.
    */
-  hashVal() {
-    return utils.hash(this.serialize());
+  hashVal(): string {
+    return hash(this.serialize());
   }
 
   /**
@@ -162,7 +187,7 @@ module.exports = class Block {
    * 
    * @returns {String} - A unique ID for the block.
    */
-  get id() {
+  get id(): string {
     return this.hashVal();
   }
 
@@ -174,7 +199,7 @@ module.exports = class Block {
    * 
    * @returns {Boolean} - True if the transaction was added successfully.
    */
-  addTransaction(tx, client) {
+  addTransaction(tx: Transaction, client?: Client): boolean {
     if (this.transactions.get(tx.id)) {
       if (client) client.log(`Duplicate transaction ${tx.id}.`);
       return false;
@@ -191,7 +216,7 @@ module.exports = class Block {
 
     // Checking and updating nonce value.
     // This portion prevents replay attacks.
-    let nonce = this.nextNonce.get(tx.from) || 0;
+    const nonce = this.nextNonce.get(tx.from) || 0;
     if (tx.nonce < nonce) {
       if (client) client.log(`Replayed transaction ${tx.id}.`);
       return false;
@@ -207,12 +232,12 @@ module.exports = class Block {
     this.transactions.set(tx.id, tx);
 
     // Taking gold from the sender
-    let senderBalance = this.balanceOf(tx.from);
+    const senderBalance = this.balanceOf(tx.from);
     this.balances.set(tx.from, senderBalance - tx.totalOutput());
 
     // Giving gold to the specified output addresses
     tx.outputs.forEach(({amount, address}) => {
-      let oldBalance = this.balanceOf(address);
+      const oldBalance = this.balanceOf(address);
       this.balances.set(address, amount + oldBalance);
     });
 
@@ -230,20 +255,20 @@ module.exports = class Block {
    * 
    * @returns {Boolean} - True if the block's transactions are all valid.
    */
-  rerun(prevBlock) {
+  rerun(prevBlock: Block): boolean {
     // Setting balances to the previous block's balances.
     this.balances = new Map(prevBlock.balances);
     this.nextNonce = new Map(prevBlock.nextNonce);
 
     // Adding coinbase reward for prevBlock.
-    let winnerBalance = this.balanceOf(prevBlock.rewardAddr);
+    const winnerBalance = this.balanceOf(prevBlock.rewardAddr);
     this.balances.set(prevBlock.rewardAddr, winnerBalance + prevBlock.totalRewards());
 
     // Re-adding all transactions.
-    let txs = this.transactions;
+    const txs = this.transactions;
     this.transactions = new Map();
-    for (let tx of txs.values()) {
-      let success = this.addTransaction(tx);
+    for (const tx of txs.values()) {
+      const success = this.addTransaction(tx);
       if (!success) return false;
     }
 
@@ -260,7 +285,7 @@ module.exports = class Block {
    * 
    * @returns {Number} - The available gold for the specified user.
    */
-  balanceOf(addr) {
+  balanceOf(addr: string): number {
     return this.balances.get(addr) || 0;
   }
 
@@ -272,7 +297,7 @@ module.exports = class Block {
    * @returns {Number} Total reward in gold for the user.
    * 
    */
-  totalRewards() {
+  totalRewards(): number {
     return [...this.transactions].reduce(
       (reward, [, tx]) => reward + tx.fee,
       this.coinbaseReward);
