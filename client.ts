@@ -52,9 +52,9 @@ export default class Client extends events.EventEmitter {
 
 
   // Network message types
-  static get MISSING_BLOCK() { return 'MISSING_BLOCK'; }
-  static get POST_TRANSACTION() { return 'POST_TRANSACTION'; }
-  static get PROOF_FOUND() { return 'PROOF_FOUND'; }
+  static readonly MISSING_BLOCK = 'MISSING_BLOCK';
+  static readonly POST_TRANSACTION = 'POST_TRANSACTION';
+  static readonly PROOF_FOUND = 'PROOF_FOUND';
 
   /**
    * The net object determines how the client communicates

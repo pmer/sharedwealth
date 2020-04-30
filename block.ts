@@ -32,8 +32,8 @@ export default class Block {
   balances: Balances;
   nextNonce: Nonces;
 
-  static get HIT_POW_TARGET() { return POW_BASE_TARGET.shiftRight(15); }
-  static get NEAR_MISS_POW_TARGET() { return POW_BASE_TARGET.shiftRight(18); }
+  static readonly HIT_POW_TARGET = POW_BASE_TARGET.shiftRight(15);
+  static readonly NEAR_MISS_POW_TARGET = POW_BASE_TARGET.shiftRight(18);
 
   /**
    * Converts a string representation of a block to a new Block instance.

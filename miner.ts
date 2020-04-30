@@ -16,7 +16,7 @@ export default class Miner extends Client {
   currentBlock: Block;
 
   // Network message types
-  static get START_MINING() { return 'START_MINING'; }
+  static readonly START_MINING = 'START_MINING';
 
   /**
    * When a new miner is created, but the PoW search is **not** yet started.
